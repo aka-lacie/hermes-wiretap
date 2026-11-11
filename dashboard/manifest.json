@@ -1,0 +1,11 @@
+{
+  "name": "wiretap",
+  "label": "Wiretap",
+  "description": "Wiretap · Wire & Cache Inspector. Every model call Hermes makes, for any provider: the exact compiled request (system prompt, tools, messages) aligned to the transcript with its true provenance, the response, latency / TTFB, prefix-cache hits and cost. Optional proxy-log enrichment adds upstream diffs, auth keys and 429s.",
+  "icon": "Activity",
+  "version": "0.3.0",
+  "tab": { "path": "/wiretap", "position": "after:analytics" },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

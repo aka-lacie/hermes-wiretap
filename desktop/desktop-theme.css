@@ -1,0 +1,30 @@
+/* Desktop's --midground is an accent hue, not text. Bridge its live --ui-*
+   palette to the shared dashboard tokens; this skin is only bundled in Desktop.
+   Apply the palette to all roots so body-portalled inspector overlays match. */
+.mt-root {
+  --background-base: var(--ui-bg-chrome);
+  --midground-base: var(--ui-base);
+  --background: var(--ui-bg-chrome);
+  --midground: var(--ui-text-primary);
+  --color-background: var(--ui-bg-chrome);
+  --color-foreground: var(--ui-text-primary);
+  --color-muted-foreground: var(--ui-text-tertiary);
+  --color-border: var(--ui-stroke-secondary);
+  --color-primary: var(--ui-accent);
+  --color-ring: var(--ui-accent);
+  --color-card: var(--ui-bg-card);
+  --color-success: var(--ui-green);
+  --color-warning: var(--ui-yellow);
+  --color-destructive: var(--ui-red);
+  /* Only the titlebar, status bar and plugin bar consume vertical space. */
+  --mt-chrome: 8rem;
+}
+/* Routes sit inside a display:contents wrapper: fill the workspace pane and
+   scroll within it, without turning the separate .mt-layer portal into a pane. */
+.mt-root[data-host="desktop"] {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding: .75rem 1rem 0;
+}

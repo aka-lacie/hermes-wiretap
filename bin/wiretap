@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+"""wiretap — read-only agent CLI over Wiretap's telemetry store and Hermes state.db.
+
+Symlink this file into a directory on PATH (for example ``$HERMES_HOME/bin``); it resolves its own location through
+the link and needs nothing but a Python 3.10+ interpreter (no Hermes import). ``wiretap --help`` lists commands.
+"""
+import importlib.util
+import sys
+from pathlib import Path
+
+_CLI = Path(__file__).resolve().parent.parent / "collector" / "cli.py"
+_spec = importlib.util.spec_from_file_location("_wiretap_cli", _CLI)
+_mod = importlib.util.module_from_spec(_spec)
+sys.modules["_wiretap_cli"] = _mod
+_spec.loader.exec_module(_mod)
+
+if __name__ == "__main__":
+    sys.exit(_mod.main())
