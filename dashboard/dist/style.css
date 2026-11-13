@@ -320,15 +320,13 @@ mark.mt-inj { background: color-mix(in srgb, var(--mt-warn) 24%, transparent); c
 span.mt-hint { font-size: 11px; }
 div.mt-hint { font-size: 11px; margin: .45rem 0; overflow-wrap: anywhere; color: var(--mt-muted); }
 
-/* ── non-blocking setup hints (no data yet / optional proxy enrichment) ── */
+/* ── non-blocking setup hint (no data yet) ── */
 .mt-hints { display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
 .mt-hintrow { display: flex; align-items: flex-start; gap: .45rem; min-width: 0; font-size: 11px; color: var(--mt-muted);
   padding: .3rem .5rem; border: 1px solid var(--mt-line); border-left: 2px solid var(--mt-acc); border-radius: 3px;
   background: color-mix(in srgb, var(--mt-acc) 5%, transparent); overflow-wrap: anywhere; }
 .mt-hintrow > span:nth-child(2) { flex: 1 1 auto; min-width: 0; }
 .mt-hinti { color: var(--mt-acc); flex: 0 0 auto; }
-.mt-hintx { font: inherit; background: none; border: 0; color: var(--mt-muted); cursor: pointer; padding: 0 .25rem; min-height: 0; flex: 0 0 auto; }
-.mt-hintx:hover { color: var(--mt-fg); }
 
 /* ── phone: single column; detail opens as a full-screen sheet ── */
 @media (max-width: 768px) {
@@ -344,7 +342,6 @@ div.mt-hint { font-size: 11px; margin: .45rem 0; overflow-wrap: anywhere; color:
   .mtj-find { font-size: 16px; width: 100%; flex: 1 1 100%; min-height: 2.2rem; }
   .mt-tools .mt-btn { min-height: 2.1rem; padding: .25rem .6rem; font-size: 12px; }
   .mt-health { flex: 1 1 0; }
-  .mt-hintx { min-height: 2rem; min-width: 2rem; }
 
   .mti-top { padding: .1rem 0 .35rem; margin-bottom: .2rem; border-bottom: 1px solid var(--mt-line); }
   .mti-sbbtn { flex: 1 1 100%; max-width: none; justify-content: flex-start; }

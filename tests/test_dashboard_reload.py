@@ -21,9 +21,6 @@ class DashboardReaderReload(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
         shutil.copytree(HERE/'collector', self.root/'collector', ignore=shutil.ignore_patterns('__pycache__'))
-        (self.root/'extensions').mkdir()
-        if (HERE/'extensions/unified_sessions.py').is_file():
-            shutil.copy2(HERE/'extensions/unified_sessions.py', self.root/'extensions/unified_sessions.py')
         spec = importlib.util.spec_from_file_location('_reload_dashboard_api', HERE/'dashboard/plugin_api.py')
         assert spec and spec.loader
         self.api = importlib.util.module_from_spec(spec)
@@ -40,15 +37,12 @@ class DashboardReaderReload(unittest.TestCase):
                 sys.modules.pop(key, None)
 
     def test_each_watched_source_hot_reloads_same_size_rapid_edits(self):
-        capture_modules = {k:sys.modules.get(k) for k in ('_wiretap_store','_wiretap_inspector','_wiretap_unified_sessions','_wiretap_capture')}
+        capture_modules = {k:sys.modules.get(k) for k in ('_wiretap_store','_wiretap_inspector','_wiretap_capture')}
         for name, path, select in [
             ('telemetry', self.root/'collector/telemetry.py', lambda t:t),
             ('inspector', self.root/'collector/inspector.py', lambda t:t.inspector),
             ('store', self.root/'collector/store.py', lambda t:t.store),
-            ('adapter', self.root/'extensions/unified_sessions.py', lambda t:t.inspector.SESSION_ADAPTER),
         ]:
-            if not path.is_file():
-                continue  # optional adapter is not shipped by core-only distributions
             with self.subTest(module=name):
                 original = path.read_text()
                 first_source = original + "\ndef reload_probe(): return 'one'\n"
@@ -73,7 +67,7 @@ class DashboardReaderReload(unittest.TestCase):
         original = path.read_text()
         source = original + "\ndef sessions_list(*a, **kw): return [{'id':'before'}]\n"
         path.write_text(source)
-        with patch.object(self.api, '_start_poller'), patch.object(self.api, '_need_state'), patch.dict(os.environ, {'MAIN_SESSION':'test'}):
+        with patch.object(self.api, '_need_state'), patch.dict(os.environ, {'MAIN_SESSION':'test'}):
             with TestClient(app) as client:
                 self.assertEqual(client.get('/inspector/sessions').json()['sessions'], [{'id':'before'}])
                 path.write_text(source.replace("'before'", "'after!'"))

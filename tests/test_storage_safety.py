@@ -41,8 +41,7 @@ class SettingsCompatibility(unittest.TestCase):
                                 'config': {'retention_hours': 12}}}}}
         old = dict(cap.SETTINGS)
         try:
-            with patch.object(cap.store, 'hermes_config', return_value=cfg), \
-                 patch.object(plugin, '_start_poller'), patch.object(cap, 'install_http_tap'):
+            with patch.object(cap.store, 'hermes_config', return_value=cfg):
                 plugin.register(_Ctx())
                 self.assertFalse(cap.SETTINGS['enabled'])
                 self.assertFalse(cap.SETTINGS['capture_payloads'])
@@ -66,7 +65,7 @@ class HookStorageSafety(_HookBase):
                      patch.object(self.cap, method, side_effect=failure), \
                      patch.object(self.mt.logger, 'debug', side_effect=OSError(errno.ENOSPC, 'log full')):
                     self.assertIsNone(self.ctx.hooks[event](api_request_id='failure'))
-        with patch.object(self.mt, '_start_poller', side_effect=OSError(errno.ENOSPC, 'full')):
+        with patch.object(self.mt, '_capture', side_effect=OSError(errno.ENOSPC, 'full')):
             self.assertIsNone(self.ctx.hooks['pre_api_request']())
 
     def test_locked_writer_drops_capture_and_recovers(self):

@@ -71,9 +71,6 @@ class SelectedSessionContext(unittest.TestCase):
                 return await call_next(request)
             finally:
                 reset_hermes_home_override(token)
-        self.poller = patch.object(self.api,'_start_poller')
-        self.poller.start()
-        self.addCleanup(self.poller.stop)
 
     def test_one_server_keeps_profiles_paths_badges_cache_and_gauges_separate(self):
         with TestClient(self.app) as client:

@@ -56,30 +56,13 @@ store = _sibling("store")
 forensics = _sibling("forensics")
 
 
-def _load_session_adapter():
-    """Optional, stdlib-only schema extension; stock installs need no adapter package."""
-    path = Path(__file__).resolve().parent.parent / "extensions" / "unified_sessions.py"
-    if not path.is_file():
-        return None
-    key = globals().get("_wiretap_sibling_prefix", "_wiretap_") + "unified_sessions"
-    if key not in sys.modules:
-        spec = importlib.util.spec_from_file_location(key, path)
-        if spec is None or spec.loader is None:
-            return None
-        mod = importlib.util.module_from_spec(spec)
-        if globals().get("_wiretap_sibling_prefix", "_wiretap_") == "_wiretap_":
-            spec.loader.exec_module(mod)
-        else:
-            exec(compile(path.read_bytes(), str(path), "exec"), mod.__dict__)
-        sys.modules[key] = mod
-    return sys.modules[key]
-
-
-SESSION_ADAPTER = _load_session_adapter()
+# This distribution ships and loads no session-schema adapter: sessions are read with the stock
+# ``state.db`` columns, and every ``_adapt`` call below returns its default.
+SESSION_ADAPTER = None
 
 
 def _adapt(method, *args, default=None):
-    """The inspector owns stock behavior; adapters return supplemental data or None."""
+    """The inspector owns stock behavior; with no adapter this is always ``default``."""
     return getattr(SESSION_ADAPTER, method)(*args) if SESSION_ADAPTER is not None else default
 
 
@@ -1496,7 +1479,7 @@ def wire_summary(tcon, cid: str, which: str = "down") -> dict:
             keys.append({"key": k, "h": h, "len": n})
     call = tcon.execute("SELECT * FROM calls WHERE id=?", (cid,)).fetchone()
     meta = {k: w.get(k) for k in ("file", "started", "ended", "family", "model", "url", "status", "n_items", "req_bytes",
-                                  "session_id", "source", "exact")}
+                                  "session_id", "source", "exact", "tools_exact")}
     # down = what went over HTTP. Post-adapter whenever the proxy saw it; a Hermes-only capture is the request
     # Hermes handed its provider client, which a native adapter may still rewrite before sending.
     layer = "wire" if (hermes or w.get("source") == "proxy") else "hermes"
@@ -1554,12 +1537,33 @@ def call_layers(tcon, cid: str) -> dict:
     return store.layer_refs(r[0], r[1], r[2], r[3])
 
 
-def _prefix_of(ref: dict) -> tuple[list, int, int]:
-    """(item hashes in send order, # of envelope keys (system/tools) in front, # of those that are tools)."""
+_NO_TOOLS = ""  # in a compared prefix: this request declared no tools
+
+
+def _prefix_of(ref: dict, tools: bool = True, pad: bool = False) -> tuple[list, int, int]:
+    """(item hashes in send order, # of envelope keys (system/tools) in front, # of those that are tools).
+    ``tools=False`` leaves the tool declarations out of the compared prefix; ``pad`` holds their place in a
+    request without any, so it lines up with one that has them."""
     keys = ref.get("keys") or {}
     sys_h = [keys[k] for k in _SYS_KEYS if k in keys]
-    tools = [keys["tools"]] if "tools" in keys else []
-    return sys_h + tools + list(ref.get("items") or []), len(sys_h) + len(tools), len(tools)
+    tool_h = [] if not tools else [keys["tools"]] if "tools" in keys else [_NO_TOOLS] if pad else []
+    return sys_h + tool_h + list(ref.get("items") or []), len(sys_h) + len(tool_h), len(tool_h)
+
+
+def hook_copy_envelope(tcon, cid: str, layer: str) -> bool:
+    """Whether this call's ``layer`` request took its tools from Hermes's sanitized hook copy (``exact=0`` and
+    no ``tools_exact``).
+
+    Hermes caps that copy by the size of the whole request, so the same tool declarations can be stored whole
+    for one call, truncated for the next and absent for a third. Such tools are shown, never compared."""
+    if layer != "pre":
+        return False
+    try:
+        r = tcon.execute(f"SELECT {store.select_cols(tcon, 'wire_calls', ('exact', 'req_hermes', 'tools_exact'))} "
+                         "FROM wire_calls WHERE id=?", (cid,)).fetchone()
+    except sqlite3.Error:
+        return False
+    return bool(r) and r[0] == 0 and not r[1] and not r[2]
 
 
 def enrich_miss(tcon, cid: str, miss: dict | None) -> dict | None:
@@ -1589,8 +1593,9 @@ def enrich_miss(tcon, cid: str, miss: dict | None) -> dict | None:
     layer = miss.get("layer") or ("post" if "post" in current and "post" in previous else "pre")
     if layer not in current or layer not in previous:
         return miss
-    ch, ncur, _ = _prefix_of(current[layer])
-    ph, _, _ = _prefix_of(previous[layer])
+    tools = miss.get("tools_compared", True)
+    ch, ncur, _ = _prefix_of(current[layer], tools)
+    ph, _, _ = _prefix_of(previous[layer], tools)
     at = miss["at"]
     if not isinstance(at, int) or not 0 <= at < min(len(ch), len(ph)):
         return miss
@@ -1600,7 +1605,7 @@ def enrich_miss(tcon, cid: str, miss: dict | None) -> dict | None:
         cached = _miss_change_cache.get(key)
     if cached is None:
         leading = [k for k in _SYS_KEYS if k in (current[layer].get("keys") or {})]
-        if "tools" in (current[layer].get("keys") or {}):
+        if tools and "tools" in (current[layer].get("keys") or {}):
             leading.append("tools")
         path = leading[at] if at < ncur else f"{current[layer].get('list_key') or 'messages'}[{at-ncur}]"
         cached = forensics.describe(get_blob(tcon, ph[at]), get_blob(tcon, ch[at]), path)
@@ -1644,18 +1649,24 @@ def explain_miss(tcon, cid: str, session_id: str | None, started: float | None, 
         layer = "post" if "post" in cur and "post" in prev else "pre" if "pre" in cur and "pre" in prev else None
         if layer is None:
             continue
-        ch, ncur, ntools = _prefix_of(cur[layer])
-        ph, _, _ = _prefix_of(prev[layer])
+        tools = not (hook_copy_envelope(tcon, cid, layer) or hook_copy_envelope(tcon, pid, layer))
+        pad = ("tools" in (cur[layer].get("keys") or {})) != ("tools" in (prev[layer].get("keys") or {}))
+        ch, ncur, ntools = _prefix_of(cur[layer], tools, pad)
+        ph, _, _ = _prefix_of(prev[layer], tools, pad)
         k = 0
         while k < min(len(ph), len(ch)) and ph[k] == ch[k]:
             k += 1
         if best is None or k > best[0]:
-            best = (k, pid, ph, ch, ncur, ntools, layer)
+            best = (k, pid, ph, ch, ncur, ntools, layer, tools)
     if not best:
         return {"why": "first captured call in this session/family/execution lane at a comparable layer (no earlier request to compare)"}
-    k, pid, ph, ch, ncur, ntools, layer = best
+    k, pid, ph, ch, ncur, ntools, layer, tools = best
     info: dict = {"prev_id": pid, "common_items": k, "items": len(ch), "prev_items": len(ph), "layer": layer}
-    if k < min(len(ph), len(ch)):
+    if not tools:
+        info["tools_compared"] = False
+    if k < min(len(ph), len(ch)) and _NO_TOOLS in (ph[k], ch[k]):
+        info.update(role="tools", why="tool declarations " + ("added" if ph[k] == _NO_TOOLS else "removed"))
+    elif k < min(len(ph), len(ch)):
         role_c, txt_c, _ = item_norm(tcon, ch[k])
         _, txt_p, _ = item_norm(tcon, ph[k])
         n = lambda h: (tcon.execute("SELECT n FROM wire_blobs WHERE h=?", (h,)).fetchone() or [0])[0]  # noqa: E731
@@ -1672,7 +1683,9 @@ def explain_miss(tcon, cid: str, session_id: str | None, started: float | None, 
                 lead += 1
             info["why"] = f"history item #{k - ncur - lead} rewritten"
     elif k == len(ph):
-        info["why"] = "prefix intact vs closest earlier call — provider-side miss (cache entry not stored/reused)"
+        info["why"] = ("prefix intact vs closest earlier call — provider-side miss (cache entry not stored/reused)" if tools
+                       # either a tool change or a provider-side miss: this capture cannot tell which
+                       else "system prompt and messages unchanged — tools not compared (hook copy)")
     return enrich_miss(tcon, cid, info)
 
 
@@ -1710,9 +1723,9 @@ def _req_ref(tcon, cid: str, which: str = "down") -> dict:
 
 
 def _post_adapter_call(tcon, sid: str, newest: str) -> str:
-    """The compiled view is the newest request, always. (Before the httpx tap this preferred an older call that
-    had a proxy body; that showed a stale request as "now". A newest call with only Hermes's copy — a non-httpx
-    transport, or a repaired row — is shown as that copy, labelled pre-adapter.)"""
+    """The compiled view is the newest request, always. (Preferring an older call that had a post-adapter body
+    showed a stale request as "now". A newest call with only Hermes's copy is shown as that copy, labelled as
+    the request Hermes handed its provider client.)"""
     return newest
 
 
@@ -2810,7 +2823,7 @@ def call_detail(tcon, cid: str, want=WANT, full: bool = False, item: int | None 
     out: dict = {"id": cid, "call": c}
     if w:
         out["wire"] = {k: w.get(k) for k in ("file", "started", "ended", "family", "model", "url", "status", "n_items",
-                                              "req_bytes", "session_id", "source", "exact")}
+                                              "req_bytes", "session_id", "source", "exact", "tools_exact")}
     else:
         out["wire"] = None
         out["note"] = NO_WIRE

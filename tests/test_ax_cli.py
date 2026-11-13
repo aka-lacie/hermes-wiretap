@@ -130,7 +130,7 @@ class WiretapAX(unittest.TestCase):
         con.execute("UPDATE calls SET auth_label='account-A',auth_key='fp1234',project='project-A',upstream_provider='claude' WHERE id='c_opus'")
         con.commit()
         con.close()
-        args = ("--provider", "cliproxy-claude", "--credential", "account-A", "--project", "project-A", "--upstream", "claude", "--status", "200")
+        args = ("--provider", "relay-claude", "--credential", "account-A", "--project", "project-A", "--upstream", "claude", "--status", "200")
         rows = self.js("calls", "list", *args)["results"]
         self.assertEqual([r["id"] for r in rows], ["c_opus"])
         self.assertEqual(self.js("calls", "list", "--credential", "fp1234")["results"][0]["id"], "c_opus")

@@ -1,8 +1,7 @@
 """The Wire view's backend: any captured call of a session (not only the newest), its call history, and one item's
 exact wire text partitioned into raw state.db content vs runtime-constructed wrappers and injected parts.
 
-Runs on a stock schema (content / api_content only) always; the typed-parts case needs the optional
-unified_sessions extension and is skipped in a core-only distribution.
+Runs on a stock schema (content / api_content only).
 """
 import importlib.util
 import json
@@ -13,7 +12,6 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
-HAS_UNIFIED = (HERE / "extensions" / "unified_sessions.py").is_file()
 
 
 def _load_inspector(name):
@@ -211,36 +209,6 @@ class WireViewStock(unittest.TestCase):
             rd = c.get("/w/inspector/wire/readable", params={"id": "call-two", "i": 0, "rows": "1"}).json()
             self.assertEqual([r["t"] for r in rd["segments"][0]["runs"] if r["k"] == "raw"], [ASK])
             self.assertEqual(c.get("/w/inspector/wire/readable", params={"id": "call-two", "i": 99}).status_code, 404)
-
-
-@unittest.skipUnless(HAS_UNIFIED, "Optional unified_sessions extension is not shipped in this core-only distribution")
-class WireViewTypedParts(unittest.TestCase):
-    def test_typed_authored_and_injection_parts_drive_the_runs(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        db = Path(tmp.name) / "state.db"
-        ins = _load_inspector("_mt_wire_view_typed")
-        tcon = ins.store.memory_store()
-        self.addCleanup(tcon.close)
-        now = time.time() - 60
-        note = "Verify the cache diagnosis against captured request layers."
-        parts = [{"type": "human", "v": 1, "text": "find the regression", "delivery": "turn", "origin": {"platform": "discord", "message_id": "m1"}},
-                 {"type": "injection", "v": 1, "kind": "turn_note", "text": note}]
-        con = sqlite3.connect(db)
-        con.executescript(STOCK.replace("finish_reason TEXT);", "finish_reason TEXT, sender_kind TEXT, sender_id TEXT, source_event_id TEXT, parts_json TEXT);"))
-        _insert(con, "sessions", {"id": SID, "source": "discord", "started_at": now})
-        _insert(con, "messages", {"session_id": SID, "role": "user", "content": "find the regression", "timestamp": now,
-                                  "sender_kind": "human", "sender_id": "discord:1", "source_event_id": "m1", "parts_json": json.dumps(parts)})
-        con.commit()
-        con.close()
-        wire = "<USER_REQUEST>find the regression</USER_REQUEST>\n<SYSTEM_MESSAGE>kind=turn_note content=" + note + "</SYSTEM_MESSAGE>"
-        _add_call(ins, tcon, "typed-call", SID, now + 5, [{"role": "user", "content": wire}], "ok")
-        rd = ins.wire_readable(db, tcon, "typed-call", part="item", i=0, row_ids=[1])
-        runs = rd["segments"][0]["runs"]
-        self.assertEqual(rd["source"], ["parts"])
-        self.assertEqual([r["t"] for r in runs if r["k"] == "raw"], ["find the regression"])
-        self.assertEqual([(r["label"], r["t"]) for r in runs if r["k"] == "injection"], [("turn_note", note)])
-        self.assertEqual({r["label"] for r in runs if r["k"] == "wrapper"}, {"USER_REQUEST", "SYSTEM_MESSAGE"})
 
 
 if __name__ == "__main__":

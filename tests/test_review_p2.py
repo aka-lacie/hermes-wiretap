@@ -1,12 +1,10 @@
 """Regression tests for the performance / SQL review of 819ed83 (REVIEW.md, P2 findings): cached views and polls
-never keep stale provenance, alignment reruns only when its inputs change, retention GC never holds the writer lock
-through its reachability mark, the calls revision follows the sliding window, untapped proxy-log joins filter for
-compatibility before their LIMIT, and the dashboard drops stale responses (jsdom harness)."""
+never keep stale provenance, retention GC never holds the writer lock through its reachability mark, the calls
+revision follows the sliding window, and the dashboard drops stale responses (jsdom harness)."""
 import importlib.util
 import json
 import os
 import shutil
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -16,8 +14,6 @@ from pathlib import Path
 from unittest import mock
 
 HERE = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_inspector import SESSION, _gemini_log, _state_db  # noqa: E402  (fixture builders only)
 
 
 def _load(name: str, path: Path):
@@ -32,17 +28,16 @@ def _load(name: str, path: Path):
 
 
 class _Env(unittest.TestCase):
-    KEYS = ("HERMES_HOME", "TELEMETRY_DB", "CLIPROXY_LOG_DIR", "MAIN_SESSION", "MODEL_TELEMETRY_POLLER")
+    KEYS = ("HERMES_HOME", "TELEMETRY_DB", "MAIN_SESSION")
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.home, self.logs = root / "home", root / "logs"
+        self.home = root / "home"
         self.home.mkdir()
-        self.logs.mkdir()
         self.old = {k: os.environ.get(k) for k in self.KEYS}
-        os.environ.update(HERMES_HOME=str(self.home), CLIPROXY_LOG_DIR=str(self.logs), MAIN_SESSION="",
-                          TELEMETRY_DB=str(self.home / "plugin-data/wiretap/telemetry.db"), MODEL_TELEMETRY_POLLER="0")
+        os.environ.update(HERMES_HOME=str(self.home), MAIN_SESSION="",
+                          TELEMETRY_DB=str(self.home / "plugin-data/wiretap/telemetry.db"))
 
     def tearDown(self):
         for k, v in self.old.items():
@@ -51,111 +46,6 @@ class _Env(unittest.TestCase):
             else:
                 os.environ[k] = v
         self.tmp.cleanup()
-
-
-class ViewProvenanceTest(_Env):
-    """Views and their alignment are keyed on what they display, not on ids and counts."""
-
-    def setUp(self):
-        super().setUp()
-        now = time.time() - 600
-        user = "can you check the wire framing please?"
-        hist = [{"role": "user", "parts": [{"text": "<USER_REQUEST>\n" + user + "\n</USER_REQUEST>"}]}]
-        _gemini_log(self.logs / "v1beta-models-gemini-2.5-pro-streamGenerateContent-a-1111aaaa.log", now + 2, hist,
-                    [{"text": "Framing is fine and the worker is done."}], 50000, 1000)
-        _state_db(self.home / "state.db", [
-            {"id": 1, "role": "user", "content": user, "timestamp": now},
-            {"id": 2, "role": "assistant", "content": "Framing is fine and the worker is done.", "timestamp": now + 5,
-             "finish_reason": "stop"},
-        ])
-        self.t = _load("_mt_rv_tel", HERE / "collector" / "telemetry.py")
-        self.t.init_db()
-        self.t.ingest_once()
-        self.con = self.t.db()
-        self.ins = self.t.inspector
-
-    def tearDown(self):
-        self.con.close()
-        super().tearDown()
-
-    def _state(self, sql, args=()):
-        s = sqlite3.connect(self.home / "state.db")
-        s.execute(sql, args)
-        s.commit()
-        s.close()
-
-    def test_an_in_place_rewrite_reaches_the_views_without_waiting_for_the_ttl(self):
-        v1 = self.ins.session_view(self.t.STATE_DB, self.con, SESSION, None, 250, False)
-        self.assertEqual({r["id"]: r["content"] for r in v1["rows"]}[1], "can you check the wire framing please?")
-        self._state("UPDATE messages SET content=? WHERE id=1", ("REDACTED by a later pass, same id and count",))
-        v2 = self.ins.session_view(self.t.STATE_DB, self.con, SESSION, None, 250, False)
-        self.assertEqual({r["id"]: r["content"] for r in v2["rows"]}[1], "REDACTED by a later pass, same id and count")
-        # the archived-history transcript (length sums over every row) sees a rewrite that changes the length
-        a1 = self.ins.session_view(self.t.STATE_DB, self.con, SESSION, None, 250, True)
-        self._state("UPDATE messages SET api_content='late envelope' WHERE id=2")
-        a2 = self.ins.session_view(self.t.STATE_DB, self.con, SESSION, None, 250, True)
-        self.assertIsNot(a1["rows"], a2["rows"], "rebuilt, not served from the memo")
-
-    def test_display_kind_reasoning_and_archived_same_length_edits_reach_the_views(self):
-        self._state("UPDATE messages SET reasoning_content='old thought' WHERE id=2")
-        self._state("INSERT INTO messages (id, session_id, role, content, timestamp, active) VALUES (3, ?, 'user', 'aaaa', 3, 0)",
-                    (SESSION,))
-        a = self.ins.session_view(self.t.STATE_DB, self.con, SESSION, None, 250, False)
-        self._state("UPDATE messages SET display_kind='internal_notification' WHERE id=1")
-        self._state("UPDATE messages SET reasoning_content='new thought' WHERE id=2")
-        b = self.ins.session_view(self.t.STATE_DB, self.con, SESSION, None, 250, False)
-        fresh = self.ins._session_view(self.t.STATE_DB, self.con, SESSION, None, 250, False)
-        self.assertEqual([(r["kind"], r.get("reasoning")) for r in b["rows"]], [(r["kind"], r.get("reasoning")) for r in fresh["rows"]])
-        self.assertNotEqual([r["kind"] for r in a["rows"]], [r["kind"] for r in b["rows"]])
-        self.ins.session_view(self.t.STATE_DB, self.con, SESSION, None, 250, True)
-        self._state("UPDATE messages SET content='bbbb' WHERE id=3")  # same length, archived row
-        c = self.ins.session_view(self.t.STATE_DB, self.con, SESSION, None, 250, True)
-        self.assertEqual({r["id"]: r["content"] for r in c["rows"]}[3], "bbbb")
-
-    def test_alignment_is_reused_when_only_the_call_status_changed_and_rerun_when_a_row_changes(self):
-        st = self.ins.ALIGN_STATS
-        c1 = self.ins.compiled_view(self.t.STATE_DB, self.con, SESSION)
-        self.assertTrue(c1.get("wire", {}).get("items"), c1.get("error"))
-        base = dict(st)
-        # a status-only write to the call (the request's refs are unchanged): the view rebuilds, alignment does not
-        self.t.store.upsert(self.con, {"id": c1["call_id"], "status": 200}, "wire_calls")
-        self.t.store.bump_wire_rev(self.con)  # as the proxy-capture writer does (this fixture's call has no session id)
-        self.con.commit()
-        c2 = self.ins.compiled_view(self.t.STATE_DB, self.con, SESSION)
-        self.assertEqual((st["run"] - base["run"], st["hit"] - base["hit"]), (0, 1))
-        self.assertEqual([i.get("row_id") for i in c1["wire"]["items"]], [i.get("row_id") for i in c2["wire"]["items"]])
-        # an existing row rewritten: alignment reruns
-        self._state("UPDATE messages SET content='a different question entirely now' WHERE id=1")
-        self.ins.compiled_view(self.t.STATE_DB, self.con, SESSION)
-        self.assertEqual(st["run"] - base["run"], 1)
-
-    def test_appended_rows_reuse_only_a_complete_alignment(self):
-        st = self.ins.ALIGN_STATS
-        c1 = self.ins.compiled_view(self.t.STATE_DB, self.con, SESSION)
-        complete = all(i.get("row_id") or i.get("row_ids") for i in c1["wire"]["items"] if self.ins._alignable(i))
-        base = dict(st)
-        self._state("INSERT INTO messages (id, session_id, role, content, timestamp, active) VALUES (3, ?, 'user', ?, ?, 1)",
-                    (SESSION, "a follow-up after the request", time.time()))
-        self.ins.compiled_view(self.t.STATE_DB, self.con, SESSION)
-        self.assertEqual((st["append_reuse"] - base["append_reuse"], st["run"] - base["run"]), (1, 0) if complete else (0, 1))
-
-    def test_the_server_revision_covers_alignment_not_just_counts(self):
-        try:
-            import fastapi  # noqa: F401
-        except Exception as e:  # pragma: no cover
-            self.skipTest(f"fastapi unavailable: {e}")
-        import threading
-        api = _load("_mt_rv_api", HERE / "dashboard" / "plugin_api.py")
-        for th in threading.enumerate():  # the module boots its poller on a thread: let it settle before cleanup
-            if th.name == "wiretap-poller-boot":
-                th.join(10)
-        view = {"call_id": "c", "wire": {"items": [{"i": 0, "row_id": None}]}, "rows_unmapped": 1, "now": 1.0}
-        r1 = json.loads(api._json_rev(view).body)
-        moved = json.loads(api._json_rev(dict(view, wire={"items": [{"i": 0, "row_id": 7}]}, now=2.0)).body)
-        self.assertNotEqual(r1["rev"], moved["rev"], "only a row_id changed")
-        self.assertEqual(json.loads(api._json_rev(dict(view, now=9.0), r1["rev"]).body).get("unchanged"), True,
-                         "the clock alone is not a change")
-        self.assertNotIn("unchanged", json.loads(api._json_rev(dict(view, wire={"items": [{"i": 0, "row_id": 7}]}), r1["rev"]).body))
 
 
 class RetentionGcTest(unittest.TestCase):
@@ -269,7 +159,7 @@ class CallsRevisionAndJoinTest(_Env):
     def test_an_event_alone_changes_the_revision_and_freshness_rides_the_unchanged_reply(self):
         now = time.time()
         with self.t._con() as con:
-            self.st.upsert(con, {"id": "p1", "source": "cliproxy", "started": now - 60, "model": "m", "family": "claude"})
+            self.st.upsert(con, {"id": "p1", "source": "proxy", "started": now - 60, "model": "m", "family": "claude"})
             self.st.bump_calls_rev(con)
         q = {"hours": ["6"], "family": ["all"], "limit": ["100"]}
         d1 = self.t.api_calls(q)
@@ -279,27 +169,6 @@ class CallsRevisionAndJoinTest(_Env):
         with self.t._con() as con:
             con.execute("INSERT INTO events (rid, ts, kind, detail) VALUES ('p1', ?, 'LCP cache hit', '')", (now,))
         self.assertNotIn("unchanged", self.t.api_calls(dict(q, rev=[d1["rev"]])))
-
-    def test_nearer_same_family_calls_of_another_model_do_not_crowd_out_the_compatible_one(self):
-        t0 = time.time() - 100
-        with self.t._con() as con:
-            for i in range(25):
-                self.st.upsert(con, {"id": f"h:{i}", "source": "hermes", "started": t0 + 0.01 * i, "family": "openai",
-                                     "model": "gpt-target" if i == 24 else "gpt-other", "prompt_tokens": 100})
-            got = self.t.match_hermes_call(con, {"id": "log", "started": t0, "family": "openai", "model": "gpt-target",
-                                                 "prompt_tokens": 100})
-        self.assertEqual(got, "h:24")
-
-    def test_nearer_calls_of_another_family_do_not_crowd_out_the_compatible_one(self):
-        t0 = time.time() - 100
-        with self.t._con() as con:
-            for i in range(6):
-                self.st.upsert(con, {"id": f"h:c{i}", "source": "hermes", "started": t0 + 0.01 * i, "model": "claude-opus-5-5",
-                                     "family": "claude"})
-            self.st.upsert(con, {"id": "h:o", "source": "hermes", "started": t0 + 0.6, "model": "gpt-5.6-sol", "family": "openai"})
-            got = self.t.match_hermes_call(con, {"id": "log1", "started": t0, "model": "gpt-5.6-sol", "family": "openai"})
-        self.assertEqual(got, "h:o")
-
 
 def _jsdom_dir() -> Path | None:
     for d in (os.environ.get("WIRETAP_JSDOM_DIR"), Path.home() / ".hermes" / "hermes-agent",

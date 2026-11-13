@@ -105,10 +105,10 @@ def build_store(path: Path, old: bool = False):
     up = dict(wire, fallbacks=[{"model": "claude-opus-4-8"}])
     up["messages"] = [{"role": "system", "content": "injected by proxy"}] + wire["messages"]
     calls = [
-        ("c_opus", "s_stock", t0 + 10, "claude", "cliproxy-claude", "claude-opus-4-8", wire, hermes, up, OPUS_RAW,
+        ("c_opus", "s_stock", t0 + 10, "claude", "relay-claude", "claude-opus-4-8", wire, hermes, up, OPUS_RAW,
          _resp("I'm going to stop here rather than carry this out.", "This asks me to lift someone else's code.",
                "claude-opus-4-8", "end_turn"), "v1-messages-x.log"),
-        ("c_gem", "s_stock", t0 + 20, "gemini", "cliproxy-gemini", "gemini-4-argon",
+        ("c_gem", "s_stock", t0 + 20, "gemini", "relay-gemini", "gemini-4-argon",
          {"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}, {"model": "gemini-4-argon", "messages": [
              {"role": "user", "content": "hi"}]}, None, GEMINI_RAW, _resp("Here is ", "**Weighing it**", "gemini-4-argon",
                                                                           "SAFETY"),
@@ -136,7 +136,7 @@ def build_store(path: Path, old: bool = False):
         st.upsert(con, {k: v for k, v in c.items() if k in have_c}, "calls")
     # an error-only call: a policy block surfaced as an API error, no wire row
     st.upsert(con, {k: v for k, v in {
-        "id": "c_err", "source": "hermes", "started": t0 + 40, "family": "claude", "provider": "cliproxy-claude",
+        "id": "c_err", "source": "hermes", "started": t0 + 40, "family": "claude", "provider": "relay-claude",
         "model": "claude-opus-5-5", "status": 400, "nfail": 1, "attempts": 1, "session_id": "s_stock",
         "attempt_detail": json.dumps([{"n": 1, "status": 400, "type": "invalid_request_error",
                                        "message": "Output blocked by content filtering policy"}])}.items() if k in have_c},
@@ -336,13 +336,8 @@ class WiretapCLI(unittest.TestCase):
         self.assertEqual(t["session"]["messages"]["total"], 2)
         d3 = self.js("session", "show", "d3", "--transcript", state=self.typed)["result"]
         self.assertEqual(d3["rows"][0]["label"], "PARENT ASSIGNMENT")
-        if (HERE/'extensions/unified_sessions.py').is_file():
-            self.assertEqual(d3["rows"][0]["sender_kind"], "parent")
-            self.assertEqual(d3["session"]["lineage"]["depth"], 1)
-            self.assertIn("unified", self.run_cli("status", state=self.typed))
-        else:
-            self.assertNotIn("sender_kind", d3["rows"][0])
-            self.assertIn("untyped", self.run_cli("status", state=self.typed))
+        self.assertNotIn("sender_kind", d3["rows"][0], "typed columns are read with the stock schema")
+        self.assertIn("untyped", self.run_cli("status", state=self.typed))
         self.assertIn("untyped", self.run_cli("status"))
 
     def test_compiled_folds_codex_reasoning(self):
@@ -374,7 +369,7 @@ class WiretapCLI(unittest.TestCase):
         c = self.js("costs", "--by", "provider")["result"]
         self.assertEqual(c["by"], "provider")
         self.assertEqual(c["total"]["calls"], 5)
-        self.assertIn("cliproxy-claude", {r["key"] for r in c["rows"]})
+        self.assertIn("relay-claude", {r["key"] for r in c["rows"]})
         self.assertEqual(self.js("costs", "--by", "upstream", db=self.old)["result"]["by"], "family",
                          "a store without the column groups by family")
         s = self.js("status")["result"]
@@ -477,7 +472,7 @@ class SignalsAtCaptureTime(unittest.TestCase):
                            + json.dumps({"model": "claude-opus-5-5", "messages": [{"role": "user", "content": "x"}]})
                            + "\n=== RESPONSE ===\n" + OPUS_RAW + "\n")
             con = st.memory_store()
-            st.upsert(con, {"id": "abcd1234", "source": "cliproxy", "started": time.time(), "model": "claude-opus-4-8"})
+            st.upsert(con, {"id": "abcd1234", "source": "proxy", "started": time.time(), "model": "claude-opus-4-8"})
             ins.capture_file(con, log, {"id": "abcd1234", "started": time.time(), "family": "claude",
                                         "model": "claude-opus-4-8"})
             sig = json.loads(con.execute("SELECT signals FROM calls WHERE id='abcd1234'").fetchone()[0])

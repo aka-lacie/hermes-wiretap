@@ -355,7 +355,7 @@
     ["readable", "Readable", "What state.db persisted for this row — its text, 💭 thinking, tool calls and results."],
     ["row", "DB Row", "The raw state.db row, every column."]];
   var WTABS = [
-    ["readable", "Readable", "The exact wire text — state.db content plain; runtime wrappers and injected context highlighted."],
+    ["readable", "Readable", "The captured request text — state.db content plain; runtime wrappers and injected context highlighted."],
     ["json", "Wire JSON", "The full request envelope as sent, expanded and scrolled to this item."]];
   // tab names from older deep links and saved preferences
   var TAB_ALIAS = { structured: "readable", parsed: "readable", diff: "readable", out: "readable", resp: "readable", req: "json", wire: "json" };
@@ -990,7 +990,7 @@
       var keyNames = (w.keys || []).filter(function (k) { return !k.list && k.key !== sy.key && k.key !== "tools"; });
       var lay = w.layer === "wire" ? '<span class="mt-chip mt-wire" title="The exact body sent over HTTP, after the provider adapter rewrote Hermes\'s messages">wire · post-adapter</span>'
         : w.layer === "hermes" && w.which === "hermes" ? '<span class="mt-chip mt-inj" title="Hermes\'s own messages, before the provider adapter rewrote them">Hermes · pre-adapter</span>'
-        : '<span class="mt-chip mt-inj" title="Only the Hermes-side capture exists for this call; a provider adapter may still rewrite it before sending">Hermes request · adapter input</span>';
+        : '<span class="mt-chip mt-inj" title="Captured from Hermes\'s request hook: what Hermes handed its provider client. The provider SDK or an adapter may still change it before it is sent">Hermes request · adapter input</span>';
       var layBtn = w.has_hermes && w.layer !== "hermes" || w.which === "hermes"
         ? '<button type="button" class="mt-btn mt-mini" data-a="clayer">' + (w.which === "hermes" ? "show wire (post-adapter)" : "show Hermes pre-adapter") + "</button>" : "";
       var calls = c.calls || [], me = calls.filter(function (x) { return x.id === c.call_id; })[0], newer = 0;
@@ -1007,7 +1007,9 @@
         (c.call_missing ? '<span class="mt-chip mt-flip" title="that call is not captured (retention, or another session) — showing the newest">call ' + esc(c.call_missing) + " not found</span>" : "") +
         (c.call_id !== c.correlated_call && !c.historic ? '<span class="mt-chip" title="newest captured request that extends the last correlated call">newest extension of ' + esc(c.correlated_call) + "</span>" : "") +
         (m.status == null ? '<span class="mt-chip mt-warnc" title="request sent, response not received yet">in flight</span>' : "") +
-        (m.exact === 0 ? '<span class="mt-chip mt-warnc" title="tools / parameters rebuilt from Hermes\'s size-capped hook copy; messages and system prompt are exact">envelope reconstructed</span>' : "") +
+        (m.exact !== 0 ? "" : m.tools_exact === 1
+          ? '<span class="mt-chip mt-warnc" title="Messages, system prompt and tools are complete. The other request parameters come from Hermes\'s size-capped hook copy and may be cut or absent">parameters from hook copy</span>'
+          : '<span class="mt-chip mt-warnc" title="Messages and system prompt are complete. Tools and parameters come from Hermes\'s size-capped hook copy: long or deeply nested values may be cut, and they are absent when the request exceeded the cap">envelope from hook copy</span>') +
         (w.has_upstream ? '<span class="mt-chip mt-wire" title="a proxy log for this call was merged">+ proxy upstream</span>' : "") +
         ((c.rows_after || []).length ? '<span class="mt-chip mt-warnc" title="transcript rows written after this request was sent">' + c.rows_after.length + " newer rows not yet on the wire</span>" +
           '<button type="button" class="mt-link mti-golink mt-warnc" data-a="after" title="Scroll to the rows written after this request">jump to them <span aria-hidden="true">↓</span></button>' : "") +
@@ -1564,7 +1566,7 @@
     }
     function callMeta(w) {
       var c = w.call || {}, m = w.meta || {};
-      var src = m.source === "hermes" ? "Hermes hook · " + (m.exact === 0 ? "envelope reconstructed" : "exact request") : (m.source === "proxy" ? "proxy log" : esc(m.source || "—"));
+      var src = m.source === "hermes" ? "Hermes hook · " + (m.exact !== 0 ? "exact request" : m.tools_exact === 1 ? "parameters from hook copy" : "envelope from hook copy") : (m.source === "proxy" ? "proxy log" : esc(m.source || "—"));
       return kv([["call", esc(w.id) + " · " + esc(m.family) + " · " + esc(m.model) + " · " + (m.status == null ? "in flight" : "HTTP " + esc(m.status))],
         ["captured by", src + (m.file ? " · proxy file " + esc(m.file) : "")],
         ["timing", fmtT(m.started) + (c.total_s != null ? " · " + c.total_s + "s total" : "") + (c.ttfb_s != null ? " · ttfb " + c.ttfb_s + "s" : "") + (c.retry_s ? " · retry " + c.retry_s + "s" : "")],
@@ -1773,10 +1775,10 @@
   // column-head tooltips (the legend that used to sit under the table)
   var COL_TIPS = {
     errors: ERR_HELP + " Sorts failed first, then recovered, then by failure observations; rate limits (429) show inside each chip.",
-    auth_key: "Credential of the serving attempt (proxy upstream when logged, else what Hermes sent)",
-    attempts: "Attempts for this call (needs proxy logs when calls go through a proxy)", cached_tokens: "Provider-reported cache-read tokens",
+    auth_key: "Provider of the serving attempt, or a credential label when a store has one",
+    attempts: "Attempts Hermes made for this call", cached_tokens: "Provider-reported cache-read tokens",
     hit_pct: "hit = cached ÷ prompt; a miss is prompt > 20k and hit < 50%", cost_usd: "Hermes's list-price estimate; subscription routes show $0",
-    cost_equiv_usd: "API-equivalent cost of subscription routes", aff: "Key affinity across the session's calls (needs proxy logs)",
+    cost_equiv_usd: "API-equivalent cost of subscription routes", aff: "Key affinity across the session's calls, when a store has credential labels",
     diverge: "Why the prompt cache missed: the first change from the previous comparable request",
   };
   function errOf(r) {
@@ -1842,7 +1844,7 @@
       sortKey: "started", sortDir: -1, lastOk: 0, alive: true };
     // Toolbar grammar shared with the Inspector: row 1 = model-family tabs (All and Sessions pinned, families in a
     // stable, scrollable strip between them); row 2 = labelled filters, help, auto-refresh. All visible. Freshness is the
-    // page header's job (capture / proxy ago): the stamp only carries a fetch error.
+    // page header's job (capture ago): the stamp only carries a fetch error.
     root.innerHTML =
       '<div class="mtt">' +
       '<div class="mtt-controls"><div class="mtt-tabs">' + TABS_SKELETON + '</div><span class="mtt-stamp mt-dim"></span></div>' +
@@ -1871,7 +1873,7 @@
       helpRow("auto-refresh", "Refreshes about every 5 seconds. While a call is open or the list is scrolled it shows paused, and new calls wait.", "r") +
       helpRow("cached, hit", "Cache-read tokens the provider reported. Hit is cached divided by prompt.") +
       helpRow("cost, equiv", "Hermes's list-price estimate. Subscription calls show $0, with the API price under equiv.") +
-      helpRow("key, att, affinity", "Serving credential, attempts and key affinity. These need proxy logs when calls go through a proxy.") +
+      helpRow("key, att, affinity", "Provider or credential label, attempts and key affinity. Hook capture records the provider name and Hermes's own attempts.") +
       helpRow("rows", "j and k select a call, Enter expands it.") +
       "</dl></div></div>";
     var layer = document.createElement("div");
@@ -2379,34 +2381,18 @@
     if (!health) return h("span", { className: "mt-health mt-dim" }, "capture …");
     if (health.error) return h("span", { className: "mt-health mt-bad" }, "API: " + health.error.slice(0, 120));
     var last = health.last_capture && health.last_capture.ts, age = last ? Math.round(Date.now() / 1000 - last) : null;
-    var px = health.proxy || {}, scan = health.last_scan && health.last_scan.ts;
     var label = health.no_data ? "no calls captured yet" : "capture " + (age == null ? "—" : ago(last)) + " ago · " + num(health.wire_calls) + " requests";
-    if (scan && px.exists) label += " · proxy " + ago(scan) + " ago";
     return h("span", { className: "mt-health mt-dim", title: health.db },
       h("span", { className: "mt-dot" + (health.no_data ? " is-idle" : "") }), h("span", { className: "mt-healtht" }, label));
   }
 
-  var HINTS_KEY = "hint-dismissed";
   function Hints(props) {
     var health = props.health;
-    var ds = useState(store(HINTS_KEY) || {}), dismissed = ds[0], setDismissed = ds[1];
-    if (!health || health.error) return null;
-    var items = [];
-    if (health.no_data) {
-      items.push(["nodata", h("span", null, "No model calls captured yet. Enable the plugin (",
-        h("code", null, "hermes plugins enable wiretap"), "), restart the gateway or CLI, and send a message — every call appears here.")]);
-    } else if (health.proxy && health.proxy.configured && !health.proxy.exists && !dismissed.proxy) {
-      items.push(["proxy", h("span", null, "Optional: if Hermes reaches providers through a logging proxy (CLIProxyAPI), run the collector with ",
-        h("code", null, "CLIPROXY_LOG_DIR"), " to add upstream request diffs, auth keys and 429 data.")]);
-    }
-    if (!items.length) return null;
-    return h("div", { className: "mt-hints", role: "note" }, items.map(function (it) {
-      return h("div", { key: it[0], className: "mt-hintrow" }, h("span", { className: "mt-hinti", "aria-hidden": "true" }, "ⓘ"), it[1],
-        it[0] === "nodata" ? null : h("button", {
-          type: "button", className: "mt-hintx", "aria-label": "Dismiss hint",
-          onClick: function () { var d = Object.assign({}, dismissed); d[it[0]] = 1; store(HINTS_KEY, d); setDismissed(d); },
-        }, "✕"));
-    }));
+    if (!health || health.error || !health.no_data) return null;
+    return h("div", { className: "mt-hints", role: "note" },
+      h("div", { className: "mt-hintrow" }, h("span", { className: "mt-hinti", "aria-hidden": "true" }, "ⓘ"),
+        h("span", null, "No model calls captured yet. Enable the plugin (",
+          h("code", null, "hermes plugins enable wiretap"), "), restart the gateway or CLI, and send a message — every call appears here.")));
   }
 
   function Page() {

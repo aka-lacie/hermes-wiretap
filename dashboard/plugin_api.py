@@ -1,6 +1,6 @@
 """Wiretap · Wire & Cache Inspector dashboard backend (plugin ``wiretap``), mounted at ``/api/plugins/wiretap/``.
 
-Read-only. The plugin's agent hooks (and, optionally, the proxy-log collector) write
+Read-only. The plugin's agent hooks write
 ``$HERMES_HOME/plugin-data/wiretap/telemetry.db``; these routes only read it and Hermes ``state.db``.
 Before the first capture every route still answers (empty data plus a ``no_data`` hint) so the tab renders.
 
@@ -9,7 +9,7 @@ Routes:
 * ``GET /calls?hours=&family=&provider=&session=&limit=&errors=``  per-call rows (with ``error_summary``) + aggregates +
   the window's families/providers
 * ``GET /sessions?hours=``                      per-session counters + main-session context gauge
-* ``GET /health``                               capture / proxy status and store paths
+* ``GET /health``                               capture status and store paths
 * ``GET /inspector/sessions?q=&limit=``         session switcher
 * ``GET /inspector/session?id=&before=&limit=&inactive=``  classified transcript rows + wire correlation
 * ``GET /inspector/compiled?id=&call=``         the session's newest (or a chosen) captured request aligned to its rows,
@@ -53,8 +53,7 @@ _LOG = logging.getLogger(__name__)
 
 
 def _source_stamp():
-    paths = [*(_COLLECTOR / f"{name}.py" for name in ("telemetry", "inspector", "store", "forensics")),
-             _COLLECTOR.parent / "extensions" / "unified_sessions.py"]
+    paths = [_COLLECTOR / f"{name}.py" for name in ("telemetry", "inspector", "store", "forensics")]
     stamp = []
     for path in paths:
         try:
@@ -98,7 +97,7 @@ def _telemetry() -> Any:
             return previous
         scope = hashlib.sha256("\0".join(map(str, paths)).encode()).hexdigest()[:16]
         prefix = _READER_PREFIX + scope + "_"
-        keys = tuple(prefix + name for name in ("telemetry", "inspector", "store", "forensics", "unified_sessions"))
+        keys = tuple(prefix + name for name in ("telemetry", "inspector", "store", "forensics"))
         saved = {key: sys.modules[key] for key in keys if key in sys.modules}
         try:
             for key in keys:
@@ -130,38 +129,7 @@ def _telemetry() -> Any:
 
 
 def _t():
-    t = _telemetry()
-    _start_poller(t)
-    return t
-
-
-_POLLER_LOCK = threading.Lock()
-
-
-def _poller_adapter():
-    key = "_wiretap_poller"
-    with _POLLER_LOCK:
-        mod = sys.modules.get(key)
-        if mod is None:
-            spec = importlib.util.spec_from_file_location(key, _COLLECTOR / "poller.py")
-            if spec is None or spec.loader is None:
-                raise RuntimeError("cannot load enrichment adapter")
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            # No other request can observe a partially initialized adapter.
-            sys.modules[key] = mod
-        return mod
-
-
-def _start_poller(t=None) -> None:
-    """No boot thread on stock Hermes; discover late logs on dashboard activity."""
-    try:
-        t = t if t is not None else _telemetry()
-        if str(t.store.plugin_setting("proxy_poller", True)).strip().lower() in ("0", "false", "no", "off"):
-            return
-        _poller_adapter().maybe_start(t)
-    except Exception:
-        pass
+    return _telemetry()
 
 
 def _ins():
@@ -208,17 +176,14 @@ def _q(**kw) -> dict:
 def health():
     t = _t()
     out: dict[str, Any] = {"db": str(t.DB_PATH), "db_exists": t.DB_PATH.exists(), "state_db": str(t.STATE_DB),
-                           "main_session": t.main_session(), "now": time.time(), "wire_calls": 0, "calls": 0,
-                           "proxy": _poller_adapter().status(t)}
+                           "main_session": t.main_session(), "now": time.time(), "wire_calls": 0, "calls": 0}
     if t.DB_PATH.exists():
         with _tcon() as con:
             out["space"] = t.store.space(con)
             out["last_capture"] = t.store.kv_get(con, "last_capture")
-            out["last_scan"] = t.store.kv_get(con, "last_scan")
             out["wire_calls"] = con.execute("SELECT COUNT(*) FROM wire_calls").fetchone()[0]
             out["calls"] = con.execute("SELECT COUNT(*) FROM calls").fetchone()[0]
             out["sources"] = {r[0] or "?": r[1] for r in con.execute("SELECT source, COUNT(*) FROM calls GROUP BY source")}
-            out["proxy"]["merged"] = con.execute("SELECT COUNT(*) FROM calls WHERE proxy_rid IS NOT NULL").fetchone()[0]
     out["no_data"] = not out["calls"]
     return _json(out)
 

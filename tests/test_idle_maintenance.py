@@ -29,8 +29,7 @@ class IdleMaintenance(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.path = Path(self.tmp.name) / 'telemetry.db'
         self.environment = mock.patch.dict(os.environ, {'HOME': self.tmp.name, 'HERMES_HOME': self.tmp.name,
-            'TELEMETRY_DB': str(self.path), 'CLIPROXY_LOG_DIR': '', 'WIRETAP_PROXY_POLLER': '0',
-            'WIRETAP_POLLER': '0', 'MODEL_TELEMETRY_POLLER': '0'})
+            'TELEMETRY_DB': str(self.path)})
         self.environment.start()
         self.addCleanup(self.environment.stop)
         self.saved = {k: v for k, v in sys.modules.items() if k.startswith('_wiretap')}
@@ -95,7 +94,7 @@ class IdleMaintenance(unittest.TestCase):
         rows = self.read("SELECT v FROM kv WHERE k='signals_rev'")
         return bool(rows and rows[0][0] == self.store.SIGNALS_REV)
 
-    def test_backfill_finishes_across_idle_timeouts_without_traffic_or_poller(self):
+    def test_backfill_finishes_across_idle_timeouts_without_traffic(self):
         self.seed()
         writer = self.writer()
         with mock.patch.object(self.store, 'backfill_signals', side_effect=self.slice):
@@ -109,9 +108,6 @@ class IdleMaintenance(unittest.TestCase):
             self.assertTrue(all(sig['v'] == 1 and sig['refusal'] for sig in signals))
             self.assertEqual(self.read("SELECT v FROM kv WHERE k='last_capture'")[0][0], capture,
                              'backfill must finish without another submitted capture')
-            self.assertFalse(any(t.name == 'wiretap-poller' and t.is_alive() for t in threading.enumerate()))
-            self.assertFalse(any('/extensions/cliproxy' in str(getattr(mod, '__file__', ''))
-                                 for mod in list(sys.modules.values()) if mod is not None))
             writer.stop(3)
 
     def test_maintenance_error_rolls_back_then_retries_even_if_logging_fails(self):

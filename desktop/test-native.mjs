@@ -113,24 +113,13 @@ try {
   assert.equal(stored.get('view'), 'telemetry', 'view changes must use ctx.storage');
   assert.equal(w.document.querySelector('iframe'), null);
 
-  // Stock users are not prompted to install an optional proxy. Only an
-  // explicitly configured missing proxy should produce the setup banner.
-  for (const [proxy, expected] of [[undefined, false], [{exists: false}, false],
-    [{configured: false, exists: false}, false], [{configured: true, exists: true}, false],
-    [{configured: true, exists: false}, true]]) {
-    health = {...fixtures['/health'], no_data: false, proxy};
-    await mount('#/wiretap?view=telemetry');
-    assert.equal(hint().includes('CLIProxyAPI'), expected, JSON.stringify(proxy));
-  }
-  w.document.querySelector('.mt-hintx').click();
-  await waitFor(() => !hint().includes('CLIProxyAPI'));
-  assert.equal(stored.get('hint-dismissed').proxy, 1, 'dismissal persists through ctx.storage');
+  // The only setup guidance is the no-data hint; it disappears once calls exist.
+  health = {...fixtures['/health'], no_data: false};
   await mount('#/wiretap?view=telemetry');
-  assert.equal(hint().includes('CLIProxyAPI'), false, 'dismissed hint must stay dismissed');
-  health = {...fixtures['/health'], no_data: true, proxy: {configured: false, exists: false}};
+  assert.equal(hint(), '', 'no setup hint once calls are captured');
+  health = {...fixtures['/health'], no_data: true};
   await mount();
   assert.ok(hint().includes('No model calls captured yet'), 'stock no-data guidance remains visible');
-  assert.equal(hint().includes('CLIProxyAPI'), false);
   health = fixtures['/health'];
 
   // Hash query belongs only to this route. Outer app parameters, unrelated
@@ -157,7 +146,7 @@ try {
   assert.ok(!calls.some(url => url.startsWith('/inspector/compiled?')), 'transcript link must not fetch compiled mode');
   assert.equal(w.document.querySelector('.mt-viewbtn.is-on .mt-long').textContent, 'Session & Wire');
   console.log(JSON.stringify({inspector: true, callsView: true, native: true, palette: true,
-    styleLifecycle: true, renderedTheme: true, proxyBanner: true, hashLinks: true, storage: true}));
+    styleLifecycle: true, renderedTheme: true, noDataHint: true, hashLinks: true, storage: true}));
 } finally {
   if (root) root.unmount();
   active.dispose();

@@ -69,7 +69,7 @@ class ReviewLanes(_HookBase):
             ins = self.cap.inspector
             miss = ins.explain_miss(con,current,SID,self.t0+190,50000,2)
             self.assertEqual(miss['prev_id'],main)
-            self.assertIn('prefix intact',miss['why'])
+            self.assertIn('system prompt and messages unchanged',miss['why'])
             first_review = ins.explain_miss(con,'h:turn1:api:2',SID,self.t0+20,50000,2)
             self.assertNotIn('prev_id',first_review)
             wrong = {'prev_id':review,'why':'history rewritten','at':2,'change':{'v':2}}

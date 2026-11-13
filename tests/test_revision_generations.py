@@ -281,7 +281,7 @@ class GenerationSequenceTest(_Base):
         after = sorted(self.rev(con, f"r{i}") for i in range(3))
         self.assertEqual(len(set(after)), 3)
         self.assertGreater(after[0], before)
-        con.execute("UPDATE wire_calls SET tap_key='k' WHERE id='r0'")  # a non-reference column (capture.py does this)
+        con.execute("UPDATE wire_calls SET url='k' WHERE id='r0'")  # a non-reference column (capture.py does this)
         self.assertGreater(self.rev(con, "r0"), after[-1])
 
     def test_a_legacy_trigger_recreated_by_an_older_process_coexists_even_with_recursive_triggers(self):

@@ -27,12 +27,9 @@ def _classic_probe(home: Path, headless=False):
     home.mkdir(parents=True, exist_ok=True)
     (home / 'plugins').mkdir()
     (home / 'plugins' / 'wiretap').symlink_to(HERE, target_is_directory=True)
-    settings = {'plugins': {'enabled': ['wiretap'], 'isolation': 'in_process',
-                           'entries': {'wiretap': {'settings': {'proxy_poller': False,
-                                                              'proxy_log_dir': str(home / 'absent-logs')}}}}}
+    settings = {'plugins': {'enabled': ['wiretap'], 'isolation': 'in_process'}}
     (home / 'config.yaml').write_text(json.dumps(settings), encoding='utf-8')
     os.environ.update(HERMES_HOME=str(home), HERMES_ENABLE_PROJECT_PLUGINS='0',
-                      CLIPROXY_LOG_DIR=str(home / 'absent-logs'),
                       HERMES_SERVE_HEADLESS='1' if headless else '0',
                       HERMES_DASHBOARD_SESSION_TOKEN='wiretap-contract-nonsecret-token')
     os.environ.pop('TELEMETRY_DB', None)
@@ -396,7 +393,7 @@ class WebappContract(unittest.TestCase):
                                 str(HERE / 'desktop/plugin.js'), str(dependency_root), str(fixtures)], cwd=HERE)
         self.assertTrue(result['inspector'])
         self.assertTrue(result['callsView'])
-        for behavior in ('palette', 'styleLifecycle', 'renderedTheme', 'proxyBanner', 'hashLinks', 'storage'):
+        for behavior in ('palette', 'styleLifecycle', 'renderedTheme', 'noDataHint', 'hashLinks', 'storage'):
             self.assertTrue(result[behavior], behavior)
 
 

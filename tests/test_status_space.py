@@ -33,8 +33,7 @@ class StatusSpace(unittest.TestCase):
         self.home = Path(self.tmp.name)
         self.path = self.home / 'plugin-data/model-telemetry/telemetry.db'
         self.environment = mock.patch.dict(os.environ, {'HOME': str(self.home), 'HERMES_HOME': str(self.home),
-            'TELEMETRY_DB': '', 'WIRETAP_STATE_DB': '', 'CLIPROXY_LOG_DIR': '', 'MAIN_SESSION': '',
-            'WIRETAP_PROXY_POLLER': '0', 'WIRETAP_POLLER': '0', 'MODEL_TELEMETRY_POLLER': '0'})
+            'TELEMETRY_DB': '', 'WIRETAP_STATE_DB': '', 'MAIN_SESSION': ''})
         self.environment.start()
         self.addCleanup(self.environment.stop)
         self.saved = {k: v for k, v in sys.modules.items() if k.startswith('_wiretap')}

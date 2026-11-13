@@ -41,8 +41,7 @@ class ErrorFilterRoute(unittest.TestCase):
         disk.close()
         mem.close()
         sqlite3.connect(home / "state.db").close()
-        with mock.patch.dict(os.environ, {"HERMES_HOME": str(home), "TELEMETRY_DB": str(tdb), "MAIN_SESSION": "",
-                                          "WIRETAP_PROXY_POLLER": "0"}):
+        with mock.patch.dict(os.environ, {"HERMES_HOME": str(home), "TELEMETRY_DB": str(tdb), "MAIN_SESSION": ""}):
             spec = importlib.util.spec_from_file_location("_mt_err_route_api", HERE / "dashboard" / "plugin_api.py")
             api = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(api)  # type: ignore[union-attr]

@@ -738,6 +738,23 @@ try {
   check(/4 calls/.test(t.title) && b.w.document.activeElement === t, `focus stays on the family tab across a poll that changed its count (${b.w.document.activeElement.tagName} ${b.w.document.activeElement.dataset && b.w.document.activeElement.dataset.t})`);
 } catch (e) { check(false, `22b (tab focus across polls) threw: ${e.message}`); }
 
+// 23. A hook capture says which part of its envelope came from Hermes's size-capped copy; a complete one says nothing.
+try {
+  for (const [meta, want] of [[{ exact: 0 }, "envelope from hook copy"], [{ exact: 0, tools_exact: 1 }, "parameters from hook copy"],
+                              [{ exact: 1, tools_exact: 1 }, null], [{ exact: 1 }, null]]) {
+    const b = boot(true);
+    b.api.mountInspector(b.root, {});
+    const p = b.w.probeS;
+    Object.assign(p.S, { sid: "s", gen: 1, mode: "wire", rows: [] });
+    const l = p.loadCompiled();
+    take(b.pending, /inspector\/compiled/).res({ rev: "a", call_id: "h:a", latest_call: "h:a", calls: [], session: { id: "s" }, system: {}, rows_after: [],
+      wire: { which: "down", layer: "hermes", meta: Object.assign({ status: 200, source: "hermes" }, meta), call: {}, keys: [], response: {}, items: [] } });
+    await l; await tick();
+    const got = [...b.root.querySelectorAll(".mti-csum .mt-chip")].map((x) => x.textContent).filter((t) => /hook copy/.test(t));
+    check(JSON.stringify(got) === JSON.stringify(want ? [want] : []), `envelope chip for ${JSON.stringify(meta)}: ${JSON.stringify(got)}`);
+  }
+} catch (e) { check(false, `23 (envelope chip) threw: ${e.message}`); }
+
 // the mounted views keep interval timers: exit explicitly
 if (fails.length) { console.log("FAIL\n" + fails.join("\n")); process.exit(1); }
 console.log("ok: calls race, stale older page, part-cache key, copy without download, part cache per view revision, sessions race, wire readable runs, call history + transcript jumps, wire JSON path");

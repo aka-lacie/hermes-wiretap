@@ -3,6 +3,11 @@
 This first backend increment broadens error visibility beyond HTTP 429 without
 changing capture, migrating a store, or changing the Inspector frontend.
 
+This package records errors only from Hermes's `api_request_error` hook. The
+proxy-side fields named below (`proxy_attempts`, upstream attempt sequences,
+cross-family detach) are written by a separate proxy-log collector that is not
+part of this package; they are read when a store has them and are empty otherwise.
+
 ## Available now
 
 Dashboard `/calls` rows and CLI call-list rows include an additive

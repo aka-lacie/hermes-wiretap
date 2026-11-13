@@ -47,8 +47,7 @@ class LegacyDashboard(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {
                 'HOME': tmp, 'HERMES_HOME': tmp, 'TELEMETRY_DB': '', 'WIRETAP_STATE_DB': '',
-                'MAIN_SESSION': '', 'CLIPROXY_LOG_DIR': '', 'WIRETAP_POLLER': '0',
-                'WIRETAP_PROXY_POLLER': '0', 'MODEL_TELEMETRY_POLLER': '0',
+                'MAIN_SESSION': '',
             }):
                 home = Path(tmp)
                 path = home / 'plugin-data/model-telemetry/telemetry.db'

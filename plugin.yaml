@@ -1,9 +1,9 @@
 manifest_version: 1
 name: wiretap
 kind: standalone
-version: 0.6.0
+version: 0.7.0
 requires_hermes: ">=0.22.5"
-description: "Wiretap · Wire & Cache Inspector: model call telemetry and a session & wire-payload inspector dashboard tab for every provider. Shows the exact compiled request Hermes sends (system prompt, tools, messages), the response, latency / TTFB, prefix-cache hits and cost, captured natively from Hermes's API-request hooks. Flags provider fallbacks, refusals and safety blocks per call. Reads stock and unified-sessions state.db schemas (typed provenance when present). Includes a read-only agent CLI (`hermes wiretap`, `bin/wiretap`). Optional proxy-log enrichment adds upstream request diffs, auth-key and 429 data."
+description: "Wiretap · Wire & Cache Inspector: model call telemetry and a session & wire-payload inspector dashboard tab for every provider. Shows the compiled request Hermes hands its provider client (system prompt, messages, and the tools and parameters Hermes passes to hooks), the response, latency / TTFB, prefix-cache hits and cost, captured only from Hermes's API-request hooks. Flags provider fallbacks, refusals and safety blocks per call. Includes a read-only agent CLI (`hermes wiretap`, `bin/wiretap`)."
 author: aka-lacie
 license: MIT
 provides_hooks:
@@ -27,15 +27,3 @@ config_schema:
     type: float
     default: 64
     description: Skip payload capture for a request whose serialized size exceeds this many MiB.
-  proxy_log_dir:
-    type: str
-    default: ""
-    description: Optional CLIProxyAPI request-log directory for the enrichment collector (CLIPROXY_LOG_DIR overrides; ~/.cli-proxy-api/logs is used when present).
-  proxy_poller:
-    type: bool
-    default: true
-    description: Enable optional enrichment when a proxy log directory is configured or detected. No thread is started otherwise.
-  poll_interval:
-    type: float
-    default: 2
-    description: Seconds between optional proxy-log poller ticks.

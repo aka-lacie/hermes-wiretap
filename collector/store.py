@@ -1,11 +1,10 @@
 """Shared store for wiretap: profile paths, the SQLite schema, content-addressed blobs and pricing.
 
-Imported (under private module names) by three processes that all write or read the same
+Imported (under private module names) by the processes that write or read the same
 ``$HERMES_HOME/plugin-data/wiretap/telemetry.db``:
 
-* the agent hook (``collector/capture.py``, inside Hermes) — the primary writer;
-* optional extensions (``extensions/``) — enrichment writers;
-* the dashboard API (``dashboard/plugin_api.py``) — reader.
+* the agent hook (``collector/capture.py``, inside Hermes) — the only writer in this package;
+* the dashboard API (``dashboard/plugin_api.py``) and the CLI (``collector/cli.py``) — readers.
 
 Stdlib only. SQLite runs in WAL mode so the writers and the reader never block each other for long.
 """
@@ -129,10 +128,6 @@ MIGRATIONS = (
     ("calls", "response_error", "TEXT"),  # semantic failure independent of the observed HTTP status
     ("wire_calls", "proxy_attempts", "TEXT"),  # every retained proxy request/response, keyed by file + attempt
     ("calls", "execution_origin", "TEXT"),  # execution fork provenance, independent of session/cache identity
-    ("wire_calls", "tap_nonces", "TEXT"),  # per-request tags (X-Wiretap-Call nonces) whose capture was validated
-    ("wire_calls", "tap_miss", "TEXT"),    # why the tap did not capture this call's final request (diagnosis)
-    ("wire_calls", "tap_key", "TEXT"),   # the credential the final outbound request carried (name or 4-char suffix)
-    ("wire_calls", "tap_kind", "TEXT"),  # api_key | oauth | proxy (sent to a local proxy: the upstream is in its log)
     ("calls", "proxy_family", "TEXT"),
     ("wire_calls", "rev", "INTEGER"),
     ("calls", "upstream_provider", "TEXT"),
@@ -141,6 +136,8 @@ MIGRATIONS = (
     ("wire_calls", "session_id", "TEXT"),
     ("wire_calls", "source", "TEXT"),
     ("wire_calls", "exact", "INTEGER"),
+    # 1: this call's tools are the list Hermes handed its provider client (not its size-capped hook copy).
+    ("wire_calls", "tools_exact", "INTEGER"),
     # Hermes's own request (adapter input) once the proxy's post-adapter body became req_down.
     ("wire_calls", "req_hermes", "TEXT"),
     # Response signals (collector/signals.py): fallbacks, refusals, safety blocks, notices, model switches.
@@ -564,7 +561,7 @@ def layer_refs(req_down, req_hermes, source, file) -> dict:
     down, herm = _loads(req_down, None), _loads(req_hermes, None)
     if not down:
         return {}
-    if herm:                       # tap or proxy merge replaced req_down and kept Hermes's copy
+    if herm:                       # a post-adapter body replaced req_down and Hermes's copy was kept
         return {"post": down, "pre": herm}
     if source == "proxy" or file:  # proxy-only capture
         return {"post": down}
@@ -1014,30 +1011,6 @@ def family_label(fam: str | None) -> str:
 
 
 FAMILY_REV = "2"
-
-
-def restore_tap_credential(con, cid: str) -> None:
-    """An unmerged call's auth key is the one its final outbound request carried, or none when that request went
-    to a local proxy (the proxy's client token is not a provider credential; the upstream one arrives with its log)."""
-    if "tap_kind" not in set(columns(con, "wire_calls")):
-        return
-    t = con.execute("SELECT tap_key, tap_kind FROM wire_calls WHERE id=?", (cid,)).fetchone()
-    if t is None or t[1] is None:
-        return
-    key, kind = (None, None) if t[1] == "proxy" else (t[0], t[1])
-    con.execute("UPDATE calls SET auth_key=?, auth_type=? WHERE id=? AND proxy_rid IS NULL", (key, kind, cid))
-
-
-def is_local_host(host: str) -> bool:
-    """A loopback (or explicitly configured) proxy host: what Hermes authenticates to there is the proxy, not the
-    provider. ``WIRETAP_PROXY_HOSTS`` (comma-separated hostnames) adds remote proxies."""
-    h = (host or "").strip("[]").lower()
-    if not h:
-        return False
-    if h in ("localhost", "::1") or h.startswith("127.") or h.endswith(".localhost"):
-        return True
-    extra = {x.strip().lower().split(":")[0] for x in os.environ.get("WIRETAP_PROXY_HOSTS", "").split(",") if x.strip()}
-    return h in extra
 
 
 def backfill_families(con) -> int:

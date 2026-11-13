@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Wiretap's provider-neutral dashboard and CLI read APIs.
 
-CLIProxyAPI parsing, log discovery and enrichment live in extensions/cliproxy.py.
-Legacy ingestion attributes are lazy adapters: ordinary imports and read queries
-never import that optional extension or start its poller.
+Read-only queries over the telemetry store the agent hooks write and over Hermes's ``state.db``. Nothing here
+ingests, polls or loads code from outside this package.
 """
 from __future__ import annotations
 
@@ -17,7 +16,6 @@ import os
 import re
 import sqlite3
 import sys
-import threading
 import time
 import traceback
 from contextlib import contextmanager
@@ -56,51 +54,6 @@ DB_PATH = store.db_path()
 MAIN_SESSION_ENV = os.environ.get("MAIN_SESSION", "").strip()
 _main_cache = {"at": 0.0, "id": None}
 GATEWAY_HYGIENE_PCT = 0.85
-_PROXY = None
-_PROXY_LOCK = threading.Lock()
-_PROXY_API = frozenset({
-    "LOG_DIR", "MATCH_WINDOW_S", "TAG_PENDING", "MATCH_SCAN_MAX", "TAG_WAIT_S", "FULL_SCAN_S", "DIR_RECHECK_S",
-    "PROXY_FIELDS", "parse_ts", "dur_s", "parse_request_log", "body_items", "store_body", "explain_miss",
-    "match_hermes_call", "merge_into_hermes", "scan_request_logs", "tail_main_log", "ingest_once", "backfill_step",
-    "poll_once", "ingest_loop", "_SCAN", "_POLL", "_BACKFILL", "_sizes_agree", "_same_request", "_same_model",
-    "_last_call_id", "_ref_last_call_id", "_usage_objs", "_head",
-})
-
-
-def proxy_available() -> bool:
-    return (Path(__file__).resolve().parent.parent / "extensions" / "cliproxy.py").is_file()
-
-
-def _proxy_extension():
-    global _PROXY
-    if not proxy_available():
-        return None
-    with _PROXY_LOCK:
-        if _PROXY is None:
-            # One instance per telemetry reader; avoid duplicate imports from
-            # concurrent dashboard requests without changing sys.path.
-            key = f"{__name__}_cliproxy"
-            spec = importlib.util.spec_from_file_location(key, Path(__file__).resolve().parent.parent / "extensions" / "cliproxy.py")
-            if spec is None or spec.loader is None:
-                raise ImportError("wiretap: cannot load optional CLIProxyAPI extension")
-            mod = importlib.util.module_from_spec(spec)
-            sys.modules[key] = mod
-            try:
-                spec.loader.exec_module(mod)
-            except BaseException:
-                sys.modules.pop(key, None)
-                raise
-            mod.DB_PATH = DB_PATH
-            _PROXY = mod
-    return _PROXY
-
-
-def __getattr__(name):
-    if name in _PROXY_API:
-        extension = _proxy_extension()
-        if extension is not None:
-            return getattr(extension, name)
-    raise AttributeError(name)
 
 
 def main_session(state_db: Path | None = None) -> str | None:
@@ -222,7 +175,7 @@ ERROR_RANK = ("(CASE WHEN status IS NULL OR typeof(status) NOT IN ('integer', 'r
 
 def _decorate(con, rows: list[dict]) -> None:
     """Stored events, cache-affinity verdict and lane for just the returned page."""
-    rids = [r.get("proxy_rid") or r["id"] for r in rows if r.get("proxy_rid") or r["source"] in ("cliproxy", "proxy")]
+    rids = [r.get("proxy_rid") or r["id"] for r in rows if r.get("proxy_rid") or r["source"] != "hermes"]
     ev: dict[str, list] = {}
     for i in range(0, len(rids), 500):
         chunk = rids[i:i + 500]
@@ -677,14 +630,3 @@ def api_sessions(q: dict) -> dict:
     except Exception:
         traceback.print_exc()
     return {"sessions": out, "main": main}
-
-
-def main():
-    """Legacy explicit collector entrypoint; the default plugin needs no collector."""
-    extension = _proxy_extension()
-    if extension is not None:
-        extension.main()
-
-
-if __name__ == "__main__":
-    main()

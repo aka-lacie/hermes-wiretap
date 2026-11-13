@@ -3,10 +3,10 @@
 Agent hooks (``pre_api_request`` / ``post_api_request`` / ``api_request_error``) feed ``collector/capture.py``,
 which writes per-call telemetry (timing, TTFB, tokens, cache hit, cost) and — unless ``capture_payloads`` is
 off — the compiled request and the response into ``$HERMES_HOME/plugin-data/wiretap/telemetry.db``
-(SQLite, 0600). The dashboard tab reads that store directly; no proxy or collector service is required.
+(SQLite, 0600). The dashboard tab reads that store directly; no proxy or collector service is involved.
 
-When proxy logs are configured or detected, the optional CLIProxyAPI extension
-enriches the same rows. Stock installations load no extension and start no poller.
+Capture uses only the arguments Hermes passes to those hooks. The plugin wraps no transport, changes no
+request and loads no code from outside this package.
 
 The hooks never disturb a turn: they snapshot and enqueue (a background thread writes), and swallow every error.
 """
@@ -25,7 +25,7 @@ _DEFAULTS = {"enabled": True, "capture_payloads": True, "retention_hours": 72.0,
 
 
 _CAPTURE_SIBLINGS = ("_wiretap_store", "_wiretap_inspector", "_wiretap_telemetry",
-                     "_wiretap_poller", "_wiretap_signals", "_wiretap_forensics")
+                     "_wiretap_signals", "_wiretap_forensics")
 _HERE = Path(__file__).resolve().parent / "collector"
 
 
@@ -49,32 +49,12 @@ def _private(key: str, name: str):
         return mod
 
 
-_PROXY_ENABLED = True
-_PROXY_INTERVAL = None
-_PROXY_LOG_DIR = None
-
-
-def _start_poller(interval: Any = None, force: bool = False) -> None:
-    """Cheap activity-driven discovery; the adapter imports the extension only when eligible."""
-    if not _PROXY_ENABLED:
-        return
-    try:
-        poller = _private("_wiretap_poller", "poller.py")
-        if not poller.enabled():
-            return
-        tel = _private("_wiretap_telemetry", "telemetry.py")
-        poller.maybe_start(tel, interval=interval or _PROXY_INTERVAL,
-                           configured=_PROXY_LOG_DIR, force=force)
-    except Exception:
-        logger.debug("wiretap proxy poller not started", exc_info=True)
-
-
 def _stale(mod) -> bool:
     """A cached module whose source changed on disk since it was loaded (plugin reload after an update).
 
     A module without a load stamp (a sibling another collector module loaded lazily, e.g. signals) is adopted with
     its file's current mtime, not treated as stale: treating it as stale retired the whole capture module on the
-    next hook — and with it every armed call and the tap's counters — each time a sibling was first loaded."""
+    next hook — and with it the writer thread and its queue — each time a sibling was first loaded."""
     try:
         mt = Path(mod.__file__).stat().st_mtime
         if not hasattr(mod, "_mt_loaded_mtime"):
@@ -126,7 +106,6 @@ def _debug(message: str) -> None:
 
 def _on_pre_api_request(**kw: Any) -> None:
     try:
-        _start_poller()
         _capture().on_pre(kw)
     except Exception:
         _debug("wiretap pre_api_request failed")
@@ -157,7 +136,7 @@ def _coerce(key: str, val: Any) -> Any:
 
 
 def _cli_process() -> bool:
-    """This process is ``hermes wiretap …`` (a read-only CLI run): no tap, no poller, no store writes from here."""
+    """This process is ``hermes wiretap …`` (a read-only CLI run): no hooks, no store writes from here."""
     return "wiretap" in sys.argv[1:4]
 
 
@@ -185,7 +164,6 @@ def _register_cli(ctx: Any) -> None:
 
 
 def register(ctx: Any) -> None:
-    global _PROXY_ENABLED, _PROXY_INTERVAL, _PROXY_LOG_DIR
     _register_cli(ctx)
     if _cli_process():
         return
@@ -197,19 +175,6 @@ def register(ctx: Any) -> None:
                 cap.SETTINGS[key] = _coerce(key, val)
         except Exception:
             pass
-    try:
-        cap.install_http_tap()
-    except Exception:
-        logger.debug("wiretap http tap not installed", exc_info=True)
     ctx.register_hook("pre_api_request", _on_pre_api_request)
     ctx.register_hook("post_api_request", _on_post_api_request)
     ctx.register_hook("api_request_error", _on_api_request_error)
-    try:
-        enabled = _coerce("enabled", ctx.get_config("proxy_poller", True))
-        interval = ctx.get_config("poll_interval", None)
-        log_dir = ctx.get_config("proxy_log_dir", None)
-    except Exception:
-        enabled, interval, log_dir = True, None, None
-    _PROXY_ENABLED, _PROXY_INTERVAL, _PROXY_LOG_DIR = enabled, interval, log_dir
-    if enabled:
-        _start_poller(interval, force=True)

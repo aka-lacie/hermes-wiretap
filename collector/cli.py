@@ -221,13 +221,6 @@ def cmd_status(ctx, a) -> dict:
                                            (ctx.tel.REFUSAL_LIKE,)).fetchone()[0] if "signals" in cols else None
         t["last_capture"] = st.kv_get(con, "last_capture", {})
         t["last_scan"] = st.kv_get(con, "last_scan", {})
-        tap = {}
-        try:
-            for k, v in con.execute("SELECT k, v FROM kv WHERE k LIKE 'tap_stats:%'"):
-                tap[k.split(":", 1)[1]] = json.loads(v)
-        except (sqlite3.Error, ValueError):
-            pass
-        t["tap_resolution_by_pid"] = tap  # how each process's httpx tap attributed outgoing requests
     if ctx.sdb.exists():
         s = out["state_db"]
         s["bytes"] = ctx.sdb.stat().st_size
@@ -387,8 +380,8 @@ def fmt_status(d) -> list[str]:
                        f"{t['refusals_stored']} flagged refusal")
         else:
             out.append("  signals: no column yet (older store) — computed on the fly per row")
-        lc, ls = t.get("last_capture") or {}, t.get("last_scan") or {}
-        out.append(f"  last capture {_ts(lc.get('ts'))} (dropped {lc.get('dropped', 0)}) · last proxy scan {_ts(ls.get('ts'))}")
+        lc = t.get("last_capture") or {}
+        out.append(f"  last capture {_ts(lc.get('ts'))} (dropped {lc.get('dropped', 0)})")
     out.append(f"state.db      {s['path']}" + ("" if s["exists"] else "  (missing)"))
     if s.get("exists"):
         out.append(f"  {s['bytes'] / 1e6:.1f} MB · schema {s['schema']} · sessions {s['sessions']} · messages ≤ {s['messages']}"
@@ -735,7 +728,7 @@ def build_parser(p: argparse.ArgumentParser | None = None) -> argparse.ArgumentP
         _common(q, False)
         return q
 
-    leaf(sub, "status", "store paths, sizes, schema flavour, capture / scan freshness, signals coverage")
+    leaf(sub, "status", "store paths, sizes, schema flavour, capture freshness, signals coverage")
 
     ss = sub.add_parser("sessions", help="list sessions").add_subparsers(dest="wt_sub", metavar="ACTION")
     ss.required = True

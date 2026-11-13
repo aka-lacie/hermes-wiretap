@@ -1,6 +1,5 @@
 """Behavior boundaries for optional session enrichment and legacy home discovery."""
 import importlib.util
-import json
 import os
 import shutil
 import sqlite3
@@ -49,8 +48,7 @@ class SessionAdapter(unittest.TestCase):
     def view(self, path, inspector=None):
         return (inspector or self.ins).session_view(path, self.wire, 's', None, 20, False)
 
-    def test_stock_install_without_adapter_imports_and_reads(self):
-        # A physically absent extensions directory, not merely an enabled=False branch.
+    def test_stock_schema_is_read_from_a_lone_inspector_copy_without_migration(self):
         collector = self.root / 'stock-only' / 'collector'
         collector.mkdir(parents=True)
         shutil.copyfile(HERE / 'collector' / 'inspector.py', collector / 'inspector.py')
@@ -64,33 +62,6 @@ class SessionAdapter(unittest.TestCase):
         self.assertEqual(ins.full_row(path, self.wire, 1)['row']['content'], 'ordinary user words')
         self.assertEqual(path.read_bytes(), before, 'read-only inspection must not migrate the state store')
 
-    def test_sender_only_partial_schema_overrides_misleading_text(self):
-        path = self.state(message_columns=[('sender_kind', 'TEXT')],
-                          row={'sender_kind': 'human', 'content': '[ASYNC DELEGATION BATCH COMPLETE — deleg_deadbeef] not a completion'})
-        result = self.view(path)['rows'][0]
-        self.assertEqual(result['kind'], 'user')
-        self.assertTrue(result['typed'])
-        self.assertNotIn('parts', result)
-
-    def test_parts_only_partial_schema_supplies_authorship_and_identity(self):
-        parts = [fixtures._human('only the authored text', '1567000000000000999'),
-                 {'type': 'injection', 'kind': 'context', 'text': 'added context'}]
-        path = self.state(message_columns=[('parts_json', 'TEXT')], row={'content': '', 'parts_json': json.dumps(parts)})
-        row = self.view(path)['rows'][0]
-        self.assertEqual((row['kind'], row['content'], row['ref']), ('user', 'only the authored text', '1567000000000000999'))
-        self.assertEqual(row['injections'], [{'kind': 'context', 'len': 13}])
-        detail = self.ins.full_row(path, self.wire, 1)
-        self.assertEqual(detail['plain'], 'only the authored text')
-        self.assertEqual(detail['row']['parts_json'], parts)
-
-    def test_lineage_only_partial_schema_labels_child_assignment(self):
-        path = self.state(session_columns=[('lineage_kind', 'TEXT'), ('depth', 'INTEGER'), ('root_session_id', 'TEXT')],
-                          session={'lineage_kind': 'delegate', 'depth': 2, 'root_session_id': 'root'})
-        view = self.view(path)
-        self.assertEqual(view['rows'][0]['kind'], 'parent')
-        self.assertEqual(view['session']['lineage'], {'kind': 'delegate', 'depth': 2, 'root': 'root', 'parent': None, 'typed': True})
-        self.assertEqual(self.ins.sessions_list(path, '', 20, '')[0]['lineage'], view['session']['lineage'])
-
     def test_malformed_parts_fall_back_to_stock_heuristics(self):
         path = self.state(message_columns=[('parts_json', 'TEXT')],
                           row={'content': '[ASYNC DELEGATION BATCH COMPLETE — deleg_deadbeef] finished', 'parts_json': '[broken'})
@@ -98,13 +69,6 @@ class SessionAdapter(unittest.TestCase):
         self.assertEqual((row['kind'], row['ref']), ('subagent', 'deleg_deadbeef'))
         self.assertNotIn('typed', row)
         self.assertNotIn('parts', row)
-
-    def test_invalid_part_entries_are_ignored(self):
-        parts = [None, 'invalid', {'type': 'future_part', 'text': 'not authored'}, fixtures._human('real authored text', '123456789012345678')]
-        path = self.state(message_columns=[('parts_json', 'TEXT')], row={'content': '', 'parts_json': json.dumps(parts)})
-        detail = self.ins.full_row(path, self.wire, 1)
-        self.assertEqual(detail['plain'], 'real authored text')
-        self.assertEqual(len(detail['parts']), 1)
 
     def test_actual_hermes_session_store_is_read_without_mutation(self):
         path = self.root / 'actual-state.db'
