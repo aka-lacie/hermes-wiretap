@@ -136,7 +136,7 @@ MIGRATIONS = (
     ("wire_calls", "session_id", "TEXT"),
     ("wire_calls", "source", "TEXT"),
     ("wire_calls", "exact", "INTEGER"),
-    # 1: this call's tools are the list Hermes handed its provider client (not its size-capped hook copy).
+    # 1: this call's tools are the request's own list when the hook fired, not Hermes's size-capped copy of it.
     ("wire_calls", "tools_exact", "INTEGER"),
     # Hermes's own request (adapter input) once the proxy's post-adapter body became req_down.
     ("wire_calls", "req_hermes", "TEXT"),

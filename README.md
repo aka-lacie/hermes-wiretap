@@ -163,11 +163,11 @@ Hermes's own objects, and the rest of the request as `request`, a sanitized copy
 stores the first two in full and takes the tools and parameters from the copy.
 
 Wiretap also reads two arguments that no Hermes release passes yet; they have been proposed to Hermes.
-`request_tools` is the tool list handed to the provider client. When a hook receives it, the call's tools are
-stored from it, the chip reads "parameters from hook copy", and tool declarations are compared between calls,
-so a miss can be reported as "tool declarations changed" with the field that differs. `request_params` is the
-rest of the request outside the size cap; with both, the capture is complete and carries no chip. Without
-them nothing changes.
+`request_tools` is the request's own tool list at the point the hook fires. When a hook receives it, the
+call's tools are stored from it, the chip reads "parameters from hook copy", and tool declarations are
+compared between calls, so a miss can be reported as "tool declarations changed" with the field that differs.
+`request_params` is the rest of the request outside the size cap; with both, the capture is complete and
+carries no chip. Without them nothing changes.
 
 The hook does its work inside the turn only as far as taking a snapshot: it serializes the request so that
 later changes to Hermes's lists cannot alter the record, then hands it to one background writer thread. A
@@ -188,9 +188,10 @@ shared by consecutive calls is stored once.
 - **Tool changes as the cause of a cache miss.** The copy is cut differently from one call to the next as a
   conversation grows, so the stored tools of two calls can differ when the tools did not. Wiretap therefore
   never compares tool declarations that came from the copy.
-- **The bytes on the wire.** What the provider SDK serializes, the HTTP headers, and anything a provider
-  adapter or another plugin's client wrapper changes after the hook has run are not visible to a hook and are
-  not recorded. The Wire view shows the request at the point Hermes hands it over.
+- **What happens after the hook.** The hook fires when Hermes has built the request. A plugin's LLM execution
+  middleware can still replace it, and the provider SDK, a provider adapter or another plugin's client wrapper
+  can still change it. Those changes, the serialized body and the HTTP headers are not visible to a hook and
+  are not recorded. The Wire view shows the request at the point the hook fires.
 - **Auxiliary calls.** Title generation, context compression, vision and other side calls do not fire these
   hooks, so they are not recorded.
 

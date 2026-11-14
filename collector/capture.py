@@ -161,7 +161,7 @@ def snapshot_request(kw: dict, max_bytes: int) -> dict | None:
     passed a truncation preview in place of ``request``, and possibly truncated values otherwise.
 
     Two arguments no Hermes release passes yet are used when present, in place of that copy: ``request_tools``
-    (the tool list handed to the provider client; ``tools_exact``) and ``request_params`` (the remaining request
+    (the request's own tool list when the hook fires; ``tools_exact``) and ``request_params`` (the remaining request
     parameters, outside the size cap). With both, the capture is ``exact``."""
     req = kw.get("request") if isinstance(kw.get("request"), dict) else {}
     sb = req.get("body") if isinstance(req.get("body"), dict) else {}  # empty when Hermes passed only a preview

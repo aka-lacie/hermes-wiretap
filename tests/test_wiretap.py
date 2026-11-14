@@ -70,7 +70,7 @@ def hook_request(api_kwargs):
 
 def proposed_hook_args(api_kwargs):
     """``request_tools`` and ``request_params`` as proposed upstream; no Hermes release passes them yet. The tools
-    are the provider-client list itself; the parameters are every other non-message, non-transport kwarg,
+    are the request's own list; the parameters are every other non-message, non-transport kwarg,
     JSON-normalized and key-redacted by Hermes but outside its size cap."""
     from agent.api_request_hooks import ApiRequestHooksMixin
     owned = {"messages", "input", "system", "instructions", "tools", "timeout", "http_client", "extra_headers",
